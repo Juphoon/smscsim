@@ -82,7 +82,6 @@ jobs:
       # Install utils. That includes:
       # yq        - parsing and querying data from YAML files;
       # jq        - parsing and querying data from JSON files;
-      # kubeval   - validating k8s manifests files.
       - name: Install Utils
         run: |
           sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys CC86BB64
@@ -116,12 +115,6 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
-
-      # K8S manifests validation.
-      - name: K8S Manifest Validation
-        run: |
-          kubeval $(find deploy -name service*.yaml)
-          kubeval $(find deploy -name deploy*.yaml)
 
       # Extract release version settings.
       - name: Load Version Settings

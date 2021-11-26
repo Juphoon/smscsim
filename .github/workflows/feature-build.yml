@@ -67,6 +67,10 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
+    # Run tests
+    - name: Run Golang tests
+      run: go test
+
     # Build binaries.
     # The aim of this step is not for deployment but rather for checking if the app is buildable.
     - name: Build
