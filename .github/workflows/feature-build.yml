@@ -76,10 +76,3 @@ jobs:
     - name: Build
       run: |
         go build
-
-    # Upload reports.
-    - name: Upload Build Reports
-      uses: actions/upload-artifact@v2
-      with:
-        name: Reports
-        path: reports
