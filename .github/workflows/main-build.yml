@@ -1,10 +1,11 @@
 name: smscsim-main-build
 
 on:
-  pull_request:
-    branches: [ main, 'hotfix/**' ]
-    paths-ignore: [ 'CHANGELOG', 'README.md' ]
-    types: [ closed ]
+  release:
+    types: [released]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 env:
   GOPRIVATE: "github.com/juphoon/*"
@@ -16,176 +17,30 @@ env:
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
 jobs:
-  # Setup the matrix for build and publish in parallel.
-  publish-prepare:
-    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+  # This workflow contains a single job called "upload"
+  upload:
+    # The type of runner that the job will run on
     runs-on: ubuntu-latest
-    outputs:
-      deployable: ${{ steps.check-deployability.outputs.deployable }}
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-
+    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-    # Install utils for parsing and querying settings in project.yaml.
-    - name: Install Utils
-      run: |
-        sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys CC86BB64
-        sudo add-apt-repository ppa:rmescandon/yq
-        sudo apt update
-        sudo apt install yq -y
-        sudo apt install jq
-
-    # Checkout codes.
-    - name: Checkout Code
-      uses: actions/checkout@v2
-      with:
-        fetch-depth: 0
-
-    # Check deployability
-    - name: Check Deployability
-      id: check-deployability
-      run: |
-        deployable=$(yq e '.deployable' .github/project.yaml)
-        echo "deployable=$deployable" >> $GITHUB_ENV
-        echo "::set-output name=deployable::$deployable"
-
-    # Compose matrix for later build and publish in parallel.
-    - name: Compose Matrix
-      if: ${{ env.deployable == 'true' }}
-      id: set-matrix
-      run: |
-        matrix=$((
-            echo '{"deploy":'
-            yq e -j -I0 '.deploy' .github/project.yaml
-            echo "}"
-        ) | jq -c . )
-        echo $matrix
-        echo $matrix | jq .
-        echo "::set-output name=matrix::$matrix"
-
-  # Core job that accomplish the following tasks:
-  # - pre-build check (CI);
-  # - build release (create new tag and publish a github release);
-  # - build container image;
-  # - add newly created image tag to flux kustomization file;
-  # - commit (modified kustomizarion file) back to main brunch;
-  # - publish container image to AWS ECR.
-  publish:
-    runs-on: ubuntu-latest
-    needs: publish-prepare
-    if: needs.publish-prepare.outputs.deployable == 'true'
-
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.publish-prepare.outputs.matrix )}}
-
-    steps:
-      # Install utils. That includes:
-      # yq        - parsing and querying data from YAML files;
-      # jq        - parsing and querying data from JSON files;
-      - name: Install Utils
-        run: |
-          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys CC86BB64
-          sudo add-apt-repository ppa:rmescandon/yq
-          sudo apt update
-          sudo apt install yq -y
-          sudo apt install jq
-          wget https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
-          tar xf kubeval-linux-amd64.tar.gz
-          sudo cp kubeval /usr/local/bin
-
-      # Install Go.
-      - name: Install Go
-        uses: actions/setup-go@v2
-        with:
-          go-version: 1.16.x
-
       # Checkout codes.
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v2
         with:
-          fetch-depth: 10000
+          fetch-depth: 0
 
-      # Setup cache for go modules.
-      - name: Cache go Modules
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      # Extract release version settings.
-      - name: Load Version Settings
+      # Pack up artifacts for the release.
+      - name: Pack Release Artifacts
         run: |
-          echo "type=$( yq e '.type' .github/project.yaml )" >> $GITHUB_ENV
-          echo "publish_img=$( yq e '.publishImg' .github/project.yaml )" >> $GITHUB_ENV
-          echo "ver_current=$( yq e '.${{ matrix.deploy }}.current' .github/project.yaml )" >> $GITHUB_ENV
-          echo "ver_next=$( yq e '.${{ matrix.deploy }}.next' .github/project.yaml )" >> $GITHUB_ENV
-          echo "type: ${{ env.type }}"
-          echo "current ver: ${{ env.ver_current }}"
-          echo "next ver: ${{ env.ver_next }}"
-
-      # Validate version settings.
-      - name: Validate Version Settings
-        run: |
-          chmod +x build_scripts/release_inspection.sh
-          ./build_scripts/release_inspection.sh releaseTags ${{ env.ver_current }} ${{ env.ver_next }}
-          if [[ ${{ env.type }} == 'pre' ]]; then
-            echo "version=${{ env.type }}-${{ matrix.deploy }}-${{ env.ver_next }}-${{ github.sha }}" >> $GITHUB_ENV
-            echo "imageTag=${{ env.type }}-${{ matrix.deploy }}:${{ env.ver_next }}-${{ github.sha }}" >> $GITHUB_ENV
-          elif [[ $type == 'release' ]]; then
-            echo "version=${{ matrix.deploy }}-${{ env.ver_next }}-${{ github.sha }}" >> $GITHUB_ENV
-            echo "imageTag=${{ matrix.deploy }}:${{ env.ver_next }}-${{ github.sha }}" >> $GITHUB_ENV
-          else
-            echo "Invalid build type"
-            exit 2
-          fi
-
-      # Validate the release tag.
-      - name: Validate Release Tag
-        uses: mukunku/tag-exists-action@v1.0.0
-        id: checkTag
-        with:
-          tag: ${{ env.version }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Stop CI if version tag exists
-      - name: Check Release Readiness
-        run: |
-          if [[ ${{ steps.checkTag.outputs.exists }} == 'true' ]]; then
-            echo "tag ${{ env.version }} exists, release not allowed!"
-            exit 3
-          fi
-
-      # Create a Github release.
-      - name: Create Github Release
-        id: create_release
-        uses: actions/create-release@v1
-        with:
-          tag_name: ${{ env.version }}
-          release_name: ${{ env.version }}
-          body_path: .github/release_notes/${{ matrix.deploy }}.md
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Pack up release artifacts.
-      - name: Pack Up Release Artifacts
-        run: |
-          mkdir artifacts
-          cp .github/release_notes/${{ matrix.deploy }}.md artifacts/release_notes.md
-          zip --junk-paths ${{ matrix.deploy }} artifacts/*
-
-      # Upload release artifacts.
+          zip --junk-paths smscsim bin/*
+      # Upload artifacts for the release.
       - name: Upload Release Artifacts
         id: upload-release-artifacts
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./${{ matrix.deploy }}.zip
-          asset_name: ${{ matrix.deploy }}.zip
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./smscsim.zip
+          asset_name: smscsim.zip
           asset_content_type: application/zip
