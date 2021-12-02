@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -226,15 +227,23 @@ func handleSmppConnection(smsc *Smsc, conn net.Conn) {
 				registeredDlr := pduBody[idxCounter+1] // registered_delivery is next field after the validity_period
 
 				// prepare submit_sm_resp
-				// msgId := strconv.Itoa(rand.Int())
-				// respBytes = stringBodyPDU(SUBMIT_SM_RESP, STS_OK, seqNum, msgId)
-
-				// deal with message id to simulate cmi
-				// msgId need format to hex in submit_sm
-				id := rand.Int()
-				msgId := strconv.Itoa(id)
-				msgIdHex := strconv.FormatInt(int64(id), 16)
-				respBytes = stringBodyPDU(SUBMIT_SM_RESP, STS_OK, seqNum, msgIdHex)
+				// use systemid to control delivery sm
+				const (
+					cmiSystemIdPrefix = "16"
+				)
+				msgId := ""
+				if strings.HasPrefix(systemId, cmiSystemIdPrefix) {
+					// deal with message id to simulate cmi
+					// msgId need format to hex in submit_sm
+					id := rand.Int()
+					msgId = strconv.Itoa(id)
+					msgIdHex := strconv.FormatInt(int64(id), 16)
+					respBytes = stringBodyPDU(SUBMIT_SM_RESP, STS_OK, seqNum, msgIdHex)
+				} else {
+					// default
+					msgId = strconv.Itoa(rand.Int())
+					respBytes = stringBodyPDU(SUBMIT_SM_RESP, STS_OK, seqNum, msgId)
+				}
 
 				if registeredDlr != 0 {
 					go func() {
